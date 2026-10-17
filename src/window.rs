@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use baseview::dpi::{LogicalPosition, LogicalSize, Size};
 use baseview::{
@@ -119,6 +119,12 @@ pub struct EguiWindowSettings {
     /// This can be used, for example, to notify the GUI that the value of a decibel
     /// meter has changed.
     pub repaint_notifier: Option<RepaintNotifier>,
+
+    /// The rate at which the [`repaint_notifier`](EguiWindowSettings::repaint_notifier) will be
+    /// polled.
+    ///
+    /// Defaults to `1.0 / 64.0` seconds.
+    pub repaint_poll_interval: Duration,
 }
 
 impl EguiWindowSettings {
@@ -229,6 +235,16 @@ impl EguiWindowSettings {
         self.repaint_notifier = Some(repaint_notifier);
         self
     }
+
+    /// The rate at which the [`repaint_notifier`](EguiWindowSettings::repaint_notifier) will be
+    /// polled in seconds.
+    ///
+    /// Defaults to `1.0 / 64.0` seconds.
+    #[inline]
+    pub fn with_repaint_poll_interval(mut self, interval: Duration) -> Self {
+        self.repaint_poll_interval = interval;
+        self
+    }
 }
 
 impl Default for EguiWindowSettings {
@@ -248,6 +264,7 @@ impl Default for EguiWindowSettings {
             wait_for_parent: false,
             fallback_scale_factor: None,
             repaint_notifier: None,
+            repaint_poll_interval: Duration::from_secs_f64(1.0 / 64.0),
         }
     }
 }
@@ -337,6 +354,7 @@ pub struct EguiWindow<A: App> {
     current_cursor_icon: Cell<baseview::MouseCursor>,
     repaint_notifier: Option<RepaintNotifier>,
     modifiers: Cell<egui::Modifiers>,
+    poll_repaint_timer_handle: baseview::TimerHandle,
 
     // Re-use the allocations from the previous output.
     full_output: RefCell<FullOutput>,
@@ -352,6 +370,7 @@ impl<A: App> EguiWindow<A> {
         mut user_app: A,
         zoom_factor: f32,
         repaint_notifier: Option<RepaintNotifier>,
+        repaint_poll_interval: Duration,
     ) -> Result<EguiWindow<A>, HandlerError> {
         let renderer = Renderer::new(window.clone(), graphics_config)?;
         let egui_ctx = egui::Context::default();
@@ -411,6 +430,8 @@ impl<A: App> EguiWindow<A> {
             }
         };
 
+        let poll_repaint_timer_handle = window.create_timer(repaint_poll_interval)?;
+
         let start_time = Instant::now();
 
         Ok(Self {
@@ -431,6 +452,7 @@ impl<A: App> EguiWindow<A> {
             repaint_notifier,
             modifiers: Cell::new(egui::Modifiers::default()),
             full_output: RefCell::new(FullOutput::default()),
+            poll_repaint_timer_handle,
         })
     }
 
@@ -484,10 +506,19 @@ impl<A: App> EguiWindow<A> {
                     app,
                     settings.zoom_factor,
                     settings.repaint_notifier,
+                    settings.repaint_poll_interval,
                 )
             },
             host,
         )
+    }
+
+    fn poll_repaint_timer(&self) {
+        if let Some(repaint_notifier) = &self.repaint_notifier
+            && repaint_notifier.repaint_requested()
+        {
+            self.window.request_redraw();
+        }
     }
 }
 
@@ -522,11 +553,7 @@ fn update_modifiers(
 
 impl<A: App> WindowHandler for EguiWindow<A> {
     fn poll(&self) {
-        if let Some(repaint_notifier) = &self.repaint_notifier
-            && repaint_notifier.repaint_requested()
-        {
-            self.window.request_redraw();
-        }
+        self.poll_repaint_timer();
     }
 
     fn draw(&self) -> Result<(), HandlerError> {
@@ -929,6 +956,12 @@ impl<A: App> WindowHandler for EguiWindow<A> {
             }
             baseview::Event::Window(_) => EventStatus::Captured,
             _ => EventStatus::Ignored,
+        }
+    }
+
+    fn on_timer(&self, timer: &baseview::TimerHandle) {
+        if timer == self.poll_repaint_timer_handle {
+            self.poll_repaint_timer();
         }
     }
 }
