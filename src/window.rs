@@ -684,6 +684,8 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                             let _ = err;
                         }
                     }
+                    // TODO?
+                    egui::OutputCommand::TextSelectionSettled(_) => {}
                 }
             }
         }
@@ -837,6 +839,7 @@ impl<A: App> WindowHandler for EguiWindow<A> {
                         delta,
                         modifiers: self.modifiers.get(),
                         phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                     });
                 }
                 baseview::MouseEvent::CursorLeft => {
