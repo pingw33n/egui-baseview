@@ -275,18 +275,22 @@ impl Renderer {
             );
         }
 
+        let encoded = encoder.finish();
+
+        self.render_state
+            .queue
+            .submit(user_cmd_bufs.into_iter().chain([encoded]));
+
+        // Free the textures only after the frame that may still draw them is submitted:
+        // `free_texture` destroys the wgpu texture at once, and a command buffer submitted
+        // after that fails validation ("Texture ... has been destroyed") and panics. egui-wgpu's
+        // own winit integration (eframe) frees after submit in the same way.
         {
             let mut renderer = self.render_state.renderer.write();
             for id in &full_output.textures_delta.free {
                 renderer.free_texture(id);
             }
         }
-
-        let encoded = encoder.finish();
-
-        self.render_state
-            .queue
-            .submit(user_cmd_bufs.into_iter().chain([encoded]));
 
         self.render_state.queue.present(output_frame);
     }
